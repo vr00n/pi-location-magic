@@ -1,23 +1,30 @@
 #!/bin/bash
 
-# A script to get the Raspberry Pi's location via the Unwired Labs API without jq.
+# A script to dynamically scan for WiFi networks and get the Pi's location.
 
 # Your API token
 TOKEN="pk.e919848b07050a451cfbaa178af3fb11"
+# Your Pi's wireless interface (usually wlan0)
+WIFI_INTERFACE="wlan0"
 
-echo "🛰️  Querying Unwired Labs API for location..."
+echo "📡 Scanning for nearby Wi-Fi networks on $WIFI_INTERFACE..."
+# Use 'sudo iwlist' to scan, then grep/awk to extract BSSIDs.
+# We build a comma-separated list of JSON objects.
+WIFI_OBJECTS=$(sudo iwlist "$WIFI_INTERFACE" scan | grep "Address:" | awk '{print "    {\"bssid\": \"" $5 "\"}"}' | paste -sd,)
 
-# --- IMPORTANT ---
-# The cell and wifi data below is STATIC.
-# For a real-world application, you would need to write code here to
-# scan for nearby WiFi APs and cell towers and insert that data dynamically.
+# Check if any WiFi networks were found
+if [ -z "$WIFI_OBJECTS" ]; then
+    echo "❌ No Wi-Fi networks found. Cannot determine location."
+    exit 1
+fi
+
+echo "🛰️  Querying Unwired Labs API with found networks..."
+
+# --- Dynamically construct the JSON payload ---
+# Note: The "cells" array is empty as a standard Pi cannot scan cell towers.
 JSON_DATA='{
     "token": "'"$TOKEN"'",
-    "radio": "gsm",
-    "mcc": 310,
-    "mnc": 410,
-    "cells": [{"lac": 7033, "cid": 17811}],
-    "wifi": [{"bssid": "00:17:c5:cd:ca:aa"}, {"bssid": "d8:97:ba:c2:f0:5a"}],
+    "wifi": ['"$WIFI_OBJECTS"'],
     "address": 1
 }'
 
@@ -28,14 +35,10 @@ API_RESPONSE=$(curl --silent --request POST \
     --data "$JSON_DATA")
 
 # --- Parsing without jq ---
-# Isolate the line with "status", then use cut to get the 4th field using a quote " as the delimiter.
 STATUS=$(echo "$API_RESPONSE" | grep -o '"status":"[^"]*"' | cut -d '"' -f 4)
 
 if [ "$STATUS" == "ok" ]; then
-    # Parse the address, latitude, and longitude from the JSON response
     ADDRESS=$(echo "$API_RESPONSE" | grep -o '"address":"[^"]*"' | cut -d '"' -f 4)
-    
-    # For numbers, which aren't in quotes, we isolate the key-value pair and then cut by the colon :
     LATITUDE=$(echo "$API_RESPONSE" | grep -o '"lat":[0-9.-]*' | cut -d ':' -f 2)
     LONGITUDE=$(echo "$API_RESPONSE" | grep -o '"lon":[0-9.-]*' | cut -d ':' -f 2)
 
@@ -43,7 +46,6 @@ if [ "$STATUS" == "ok" ]; then
     echo "📍 Address: $ADDRESS"
     echo "   Coordinates: $LATITUDE, $LONGITUDE"
 else
-    # If status is not "ok", parse and print the error message
     ERROR_MESSAGE=$(echo "$API_RESPONSE" | grep -o '"message":"[^"]*"' | cut -d '"' -f 4)
     echo "❌ Error: Could not retrieve location."
     echo "   API response: $ERROR_MESSAGE"
