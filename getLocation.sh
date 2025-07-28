@@ -1,6 +1,7 @@
 #!/bin/bash
 
-# A script to dynamically scan for WiFi networks and get the Pi's location.
+# A script to dynamically scan for WiFi networks and get the Pi's location,
+# now with logging to show which networks were found.
 
 # Your API token
 TOKEN="pk.e919848b07050a451cfbaa178af3fb11"
@@ -8,20 +9,32 @@ TOKEN="pk.e919848b07050a451cfbaa178af3fb11"
 WIFI_INTERFACE="wlan0"
 
 echo "📡 Scanning for nearby Wi-Fi networks on $WIFI_INTERFACE..."
-# Use 'sudo iwlist' to scan, then grep/awk to extract BSSIDs.
-# We build a comma-separated list of JSON objects.
-WIFI_OBJECTS=$(sudo iwlist "$WIFI_INTERFACE" scan | grep "Address:" | awk '{print "    {\"bssid\": \"" $5 "\"}"}' | paste -sd,)
+
+# Scan and read the BSSIDs into a bash array for easy processing
+mapfile -t BSSID_LIST < <(sudo iwlist "$WIFI_INTERFACE" scan | grep "Address:" | awk '{print $5}')
 
 # Check if any WiFi networks were found
-if [ -z "$WIFI_OBJECTS" ]; then
+if [ ${#BSSID_LIST[@]} -eq 0 ]; then
     echo "❌ No Wi-Fi networks found. Cannot determine location."
     exit 1
 fi
 
+# --- NEW: Log the found networks ---
+echo "✅ Found ${#BSSID_LIST[@]} network(s):"
+printf "  %s\n" "${BSSID_LIST[@]}"
+
+# Now, build the JSON objects from our list of BSSIDs
+WIFI_OBJECTS=""
+for BSSID in "${BSSID_LIST[@]}"; do
+    WIFI_OBJECTS+="{\"bssid\": \"$BSSID\"},"
+done
+# Remove the final trailing comma to create valid JSON
+WIFI_OBJECTS=${WIFI_OBJECTS%,}
+
+
 echo "🛰️  Querying Unwired Labs API with found networks..."
 
-# --- Dynamically construct the JSON payload ---
-# Note: The "cells" array is empty as a standard Pi cannot scan cell towers.
+# Dynamically construct the JSON payload
 JSON_DATA='{
     "token": "'"$TOKEN"'",
     "wifi": ['"$WIFI_OBJECTS"'],
